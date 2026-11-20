@@ -110,8 +110,25 @@ Worth writing down, because it is the part that is easy to get wrong:
    error either.
 
 The SDK does not parse WASM custom sections, so `internal/wasm` implements the
-small amount of the binary format that step 3 needs.
+small amount of the binary format that step 3 needs. With `module` as the bytes
+from step 2, `bytes` from the standard library, `wasm` from `internal/wasm` and
+`xdr` from `github.com/stellar/go-stellar-sdk/xdr`, steps 3 and 4 are:
 
+```go
+spec, err := wasm.CustomSection(module, wasm.SectionContractSpec) // "contractspecv0"
+if err != nil {
+    return err // no spec section: nothing to decode
+}
+
+r := bytes.NewReader(spec)
+for r.Len() > 0 {
+    var entry xdr.ScSpecEntry
+    if _, err := xdr.Unmarshal(r, &entry); err != nil {
+        return err
+    }
+    // one function, type, event or constant of the interface
+}
+```
 
 ### Link previews and sitemaps
 
@@ -123,6 +140,26 @@ five function names. Sitemaps use `last_refreshed` for `<lastmod>`, and
 registries with over 49,999 contracts use a sitemap index that links to
 bounded pages of at most 50,000 URLs. When `PUBLIC_URL` is unset the
 sitemap is unavailable (404).
+
+For example:
+
+```console
+$ PUBLIC_URL=https://registry.example.org sorovault serve
+$ curl -s localhost:8080/sitemap.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://registry.example.org/</loc>
+  </url>
+  <url>
+    <loc>https://registry.example.org/contracts/CDZZ…4PAN?network=testnet</loc>
+    <lastmod>2026-08-07T12:00:00Z</lastmod>
+  </url>
+</urlset>
+$ curl -s 'localhost:8080/contracts/CDZZ…4PAN?network=testnet' \
+    | grep -o '<meta property="og:url"[^>]*>'
+<meta property="og:url" content="https://registry.example.org/contracts/CDZZ…4PAN?network=testnet">
+```
 
 ## Quickstart
 
@@ -140,6 +177,16 @@ Then register a contract and browse it:
 $ curl -X POST localhost:8080/api/contracts \
     -H 'content-type: application/json' \
     -d '{"contract_id":"CDZZXVGUCLBUTE3WDD6TF2NXPTBPOYTVPPBBIZMSPVIQLUG226XJ4PAN"}'
+```
+
+See what SoroVault decoded:
+
+```console
+$ curl -s localhost:8080/api/contracts/CDZZXVGUCLBUTE3WDD6TF2NXPTBPOYTVPPBBIZMSPVIQLUG226XJ4PAN \
+    | jq '.interface.functions[].name'
+"vote"
+"has_voted"
+"initialize"
 ```
 
 Open <http://localhost:8080> for the browse UI.
@@ -345,7 +392,17 @@ writes. `GET /api/stats` stays public and is unaffected.
 ### Telling the world about an upgrade
 
 Set `REFRESH_WEBHOOK_URL` and every contract whose interface changes during a
-sweep is posted to it, one message per contract:
+sweep is posted to it, one message per contract. With `DATABASE_URL` and
+`RPC_URL` already in the environment:
+
+```console
+$ REFRESH_INTERVAL=6h \
+  REFRESH_WEBHOOK_URL=https://hooks.example.com/sorovault \
+  REFRESH_WEBHOOK_SECRET=replace-me \
+  sorovault serve
+```
+
+The payload for one change looks like this:
 
 ```json
 {
